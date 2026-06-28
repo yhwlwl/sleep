@@ -1,0 +1,43 @@
+{
+  "name": "noon-lock",
+  "version": "1.0.0",
+  "description": "教室午休倒计时锁屏 - 请同学回到座位，保持安静",
+  "main": "main.js",
+  "author": "",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:portable": "electron-builder --win portable"
+  },
+  "build": {
+    "appId": "noon-lock",
+    "productName": "午休静校",
+    "directories": {
+      "output": "out"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "sign": null
+    },
+    "portable": {
+      "artifactName": "noon-lock.exe",
+      "requestExecutionLevel": "user"
+    },
+    "files": [
+      "index.html",
+      "main.js",
+      "preload.js"
+    ]
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  }
+}

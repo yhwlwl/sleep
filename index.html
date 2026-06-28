@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>午休静校</title>
+<style>
+  *, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+    color: #fff;
+    font-family: "Microsoft YaHei", "SimHei", "黑体", "PingFang SC", sans-serif;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: none;
+  }
+
+  .container {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-evenly;
+    align-items: center;
+    padding: 3vh 0;
+  }
+
+  .text-return {
+    font-size: min(4.5vw, 7vh);
+    font-weight: 400;
+    letter-spacing: 0.3em;
+    opacity: 0.9;
+  }
+
+  .char-jing {
+    font-size: min(38vw, 50vh);
+    font-weight: 700;
+    line-height: 1;
+    text-align: center;
+    width: 100%;
+    text-indent: 0.5em;
+    text-shadow: 0 0 8vw rgba(255,255,255,0.12);
+  }
+
+  .text-time-range {
+    font-size: min(3.2vw, 4.5vh);
+    font-weight: 300;
+    letter-spacing: 0.2em;
+    opacity: 0.7;
+  }
+
+  .countdown {
+    font-size: min(10vw, 13vh);
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    font-variant-numeric: tabular-nums;
+    font-family: "Consolas", "Microsoft YaHei", "SimHei", monospace;
+  }
+
+  .countdown.ended {
+    font-size: min(5vw, 7vh);
+    color: #ccc;
+  }
+
+  /* 点击启动遮罩（非 Kiosk 模式下使用） */
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+    cursor: pointer;
+    flex-direction: column;
+    gap: 2vh;
+  }
+  .overlay.hidden {
+    display: none;
+  }
+  .overlay-text {
+    font-size: 3vw;
+    color: #aaa;
+    letter-spacing: 0.2em;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  .overlay-icon {
+    font-size: 8vw;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+  }
+
+  /* 密码输入框（EXE 版老师退出用） */
+  .password-dialog {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.85);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: 10000;
+    flex-direction: column;
+    gap: 2vh;
+  }
+  .password-dialog.show {
+    display: flex;
+  }
+  .password-dialog input {
+    font-size: 3vw;
+    padding: 1vh 2vw;
+    background: #222;
+    color: #fff;
+    border: 2px solid #555;
+    border-radius: 0.5vw;
+    text-align: center;
+    letter-spacing: 0.3em;
+    outline: none;
+    font-family: "Consolas", monospace;
+  }
+  .password-dialog input:focus {
+    border-color: #fff;
+  }
+  .password-hint {
+    font-size: 1.8vw;
+    color: #888;
+  }
+</style>
+</head>
+<body>
+
+<!-- 点击启动遮罩 -->
+<div class="overlay" id="overlay">
+  <div class="overlay-icon">▶</div>
+  <div class="overlay-text">点击屏幕</div>
+</div>
+
+<!-- 密码对话框 -->
+<div class="password-dialog" id="passwordDialog">
+  <div class="overlay-text">请输入退出密码</div>
+  <input type="password" id="passwordInput" maxlength="6" placeholder="······" autocomplete="off">
+  <div class="password-hint">按 Esc 取消</div>
+</div>
+
+<!-- 主画面 -->
+<div class="container" id="container">
+  <div class="text-return">午休期间 请保持安</div>
+  <div class="char-jing">静！</div>
+  <div class="text-time-range">（13:10 ~ 13:55）</div>
+  <div class="countdown" id="countdown">--:--:--</div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  // ============ 配置 ============
+  const TARGET_HOUR = 13;
+  const TARGET_MINUTE = 55;
+  const TARGET_SECOND = 0;
+  const TEACHER_EXIT_PASSWORD = '0000'; // 老师退出密码
+  const TEACHER_EXIT_KEY = 'KeyQ';      // Ctrl+Shift+Q
+
+  // ============ DOM 引用 ============
+  const overlay = document.getElementById('overlay');
+  const container = document.getElementById('container');
+  const countdownEl = document.getElementById('countdown');
+  const passwordDialog = document.getElementById('passwordDialog');
+  const passwordInput = document.getElementById('passwordInput');
+
+  // ============ 状态 ============
+  let countdownInterval = null;
+  let isLocked = false;
+  let passwordVisible = false;
+
+  // ============ 倒计时 ============
+  function getTargetTime() {
+    const now = new Date();
+    const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(),
+                            TARGET_HOUR, TARGET_MINUTE, TARGET_SECOND, 0);
+    return target;
+  }
+
+  function getRemainingSeconds() {
+    const now = new Date();
+    const target = getTargetTime();
+    const diff = target - now;
+    return Math.max(0, Math.floor(diff / 1000));
+  }
+
+  function formatTime(totalSeconds) {
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    return [h, m, s].map(n => String(n).padStart(2, '0')).join(':');
+  }
+
+  function updateCountdown() {
+    const remaining = getRemainingSeconds();
+    countdownEl.textContent = formatTime(remaining);
+
+    if (remaining <= 0) {
+      stopCountdown();
+      onTimeUp();
+    }
+  }
+
+  function startCountdown() {
+    updateCountdown();
+    countdownInterval = setInterval(updateCountdown, 500); // 500ms 刷新防跳秒
+  }
+
+  function stopCountdown() {
+    if (countdownInterval) {
+      clearInterval(countdownInterval);
+      countdownInterval = null;
+    }
+  }
+
+  function onTimeUp() {
+    countdownEl.textContent = '00:00:00';
+    countdownEl.classList.add('ended');
+
+    // 显示"午休结束"后 3 秒尝试关闭
+    setTimeout(() => {
+      // 尝试关闭窗口（Kiosk 模式下通常有效）
+      tryCloseWindow();
+    }, 3000);
+  }
+
+  // ============ 窗口关闭 ============
+  function tryCloseWindow() {
+    // Electron 版：通过 IPC 通知主进程关闭（主进程会解锁并关闭）
+    if (window.electronAPI && window.electronAPI.closeApp) {
+      window.electronAPI.closeApp();
+      return;
+    }
+
+    // Web 版：多种方式尝试关闭
+    window.close();
+
+    if (window.opener) {
+      window.opener = window;
+      window.close();
+    }
+
+    // 兜底：覆盖页面显示结束信息
+    setTimeout(() => {
+      if (!document.hidden) {
+        document.body.innerHTML = '<div style="display:flex;justify-content:center;align-items:center;width:100vw;height:100vh;background:#000;color:#fff;font-size:5vw;font-family:Microsoft YaHei,sans-serif;">午休结束，请关闭窗口</div>';
+      }
+    }, 1000);
+  }
+
+  // ============ 全屏控制 ============
+  function requestFullscreen() {
+    const el = document.documentElement;
+    if (el.requestFullscreen) {
+      el.requestFullscreen().catch(() => {});
+    } else if (el.webkitRequestFullscreen) {
+      el.webkitRequestFullscreen();
+    } else if (el.msRequestFullscreen) {
+      el.msRequestFullscreen();
+    }
+  }
+
+  function isFullscreen() {
+    return !!(document.fullscreenElement ||
+              document.webkitFullscreenElement ||
+              document.msFullscreenElement);
+  }
+
+  function onFullscreenChange() {
+    if (!isFullscreen() && isLocked) {
+      // 失去全屏 → 立刻重新全屏
+      setTimeout(requestFullscreen, 100);
+    }
+  }
+
+  // ============ 页面可见性 ============
+  function onVisibilityChange() {
+    if (document.hidden && isLocked) {
+      // 页面被切到后台 → 尝试重新聚焦
+      window.focus();
+    }
+  }
+
+  // ============ 键盘拦截 ============
+  function onKeyDown(e) {
+    if (!isLocked) return;
+
+    // 老师退出组合键 Ctrl+Shift+Q（EXE 版也由 Electron 处理，这里做 Web 版兜底）
+    if (e.ctrlKey && e.shiftKey && e.code === TEACHER_EXIT_KEY) {
+      e.preventDefault();
+      showPasswordDialog();
+      return;
+    }
+
+    // 拦截所有退出/切换相关的按键
+    const blocked = [
+      // Esc
+      'Escape',
+      // F11 全屏切换
+      'F11',
+      // Alt 组合
+      'AltLeft', 'AltRight',
+      // Win 键
+      'MetaLeft', 'MetaRight',
+      // 功能键
+      'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F12',
+      // 浏览器/系统快捷键
+      'BrowserHome', 'BrowserSearch', 'BrowserFavorites',
+      'LaunchMail', 'LaunchMediaSelect', 'LaunchApp1', 'LaunchApp2',
+      // Context menu
+      'ContextMenu',
+    ];
+
+    if (blocked.includes(e.code) || blocked.includes(e.key)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return false;
+    }
+
+    // Ctrl 组合键拦截
+    if (e.ctrlKey) {
+      const blockedCtrl = [
+        'KeyW', 'KeyT', 'KeyN',        // Ctrl+W/T/N → 关标签/新标签/新窗口
+        'KeyD',                          // Ctrl+D → 添加书签
+        'KeyH', 'KeyJ',                  // Ctrl+H/J → 历史/下载
+        'KeyO', 'KeyU',                  // Ctrl+O/U → 打开文件/查看源码
+        'KeyP', 'KeyS',                  // Ctrl+P/S → 打印/保存
+        'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5',
+        'Digit6', 'Digit7', 'Digit8', 'Digit9',
+        'Tab', 'F4',                     // Ctrl+Tab / Ctrl+F4
+        'ShiftLeft', 'ShiftRight',       // Ctrl+Shift
+      ];
+      if (blockedCtrl.includes(e.code) || e.key === 'Tab' || e.key === 'F4') {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+    }
+
+    // Alt 组合键拦截
+    if (e.altKey) {
+      const blockedAlt = ['F4', 'Tab', 'Space', 'Enter', 'Home', 'End', 'ArrowLeft', 'ArrowRight'];
+      if (blockedAlt.includes(e.key) || blockedAlt.includes(e.code)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+      // 拦截所有 Alt+字母（菜单快捷键）
+      if (e.code && e.code.startsWith('Key')) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+    }
+  }
+
+  // 防止右键菜单
+  function onContextMenu(e) {
+    if (isLocked) {
+      e.preventDefault();
+      return false;
+    }
+  }
+
+  // ============ 密码对话框 ============
+  function showPasswordDialog() {
+    passwordVisible = true;
+    passwordDialog.classList.add('show');
+    passwordInput.value = '';
+    setTimeout(() => passwordInput.focus(), 100);
+  }
+
+  function hidePasswordDialog() {
+    passwordVisible = false;
+    passwordDialog.classList.remove('show');
+    passwordInput.value = '';
+  }
+
+  passwordInput.addEventListener('keydown', async function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      let correct = false;
+
+      // Electron 版：通过 IPC 验证（更安全，密码不暴露在渲染进程）
+      if (window.electronAPI && window.electronAPI.verifyPassword) {
+        correct = await window.electronAPI.verifyPassword(passwordInput.value);
+      } else {
+        // Web 版：本地验证
+        correct = (passwordInput.value === TEACHER_EXIT_PASSWORD);
+      }
+
+      if (correct) {
+        unlockAndClose();
+      } else {
+        passwordInput.value = '';
+        passwordInput.style.borderColor = '#f44';
+        setTimeout(() => { passwordInput.style.borderColor = '#555'; }, 600);
+      }
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      hidePasswordDialog();
+    }
+    e.stopPropagation();
+  });
+
+  function unlockAndClose() {
+    isLocked = false;
+    stopCountdown();
+
+    // 移除 beforeunload
+    window.removeEventListener('beforeunload', beforeUnloadHandler);
+
+    // Electron 版：通知主进程解锁
+    if (window.electronAPI && window.electronAPI.unlockAndClose) {
+      window.electronAPI.unlockAndClose();
+      return;
+    }
+
+    // Web 版：直接关闭
+    window.close();
+    setTimeout(() => {
+      document.body.innerHTML = '<div style="display:flex;justify-content:center;align-items:center;width:100vw;height:100vh;background:#000;color:#fff;font-size:4vw;font-family:Microsoft YaHei,sans-serif;">已解锁，请手动关闭窗口</div>';
+    }, 500);
+  }
+
+  // ============ beforeunload ============
+  function beforeUnloadHandler(e) {
+    if (isLocked) {
+      e.preventDefault();
+      e.returnValue = '午休中，确定要关闭吗？';
+      return e.returnValue;
+    }
+  }
+
+  // ============ 启动流程 ============
+  function startLockdown() {
+    overlay.classList.add('hidden');
+    isLocked = true;
+
+    // 请求全屏
+    requestFullscreen();
+
+    // 启动倒计时
+    startCountdown();
+
+    // 添加事件监听
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+    document.addEventListener('msfullscreenchange', onFullscreenChange);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('contextmenu', onContextMenu, true);
+    window.addEventListener('beforeunload', beforeUnloadHandler);
+
+    // 防止拖拽/选中
+    document.addEventListener('dragstart', e => e.preventDefault());
+    document.addEventListener('selectstart', e => { if (isLocked) e.preventDefault(); });
+
+    // 定期检查全屏状态（兜底）
+    setInterval(() => {
+      if (isLocked && !isFullscreen()) {
+        requestFullscreen();
+      }
+    }, 2000);
+  }
+
+  // ============ 初始化 ============
+  function init() {
+    const remaining = getRemainingSeconds();
+
+    // 如果已经过了 13:55，直接显示结束
+    if (remaining <= 0) {
+      countdownEl.textContent = '00:00:00';
+      countdownEl.classList.add('ended');
+      overlay.querySelector('.overlay-text').textContent = '午休时间已结束';
+      overlay.querySelector('.overlay-icon').textContent = '✓';
+      overlay.addEventListener('click', () => {
+        tryCloseWindow();
+      });
+      return;
+    }
+
+    // 预显示倒计时初始值
+    countdownEl.textContent = formatTime(remaining);
+
+    // ============ Electron 环境检测 ============
+    const isElectron = !!(window.electronAPI && window.electronAPI.closeApp);
+
+    if (isElectron) {
+      // Electron 版：自动启动，无需点击遮罩
+      startLockdown();
+
+      // 监听主进程发来的显示密码框指令
+      if (window.electronAPI.onShowPasswordDialog) {
+        window.electronAPI.onShowPasswordDialog(() => {
+          showPasswordDialog();
+        });
+      }
+      return;
+    }
+
+    // ============ Web 版：手动启动 ============
+    // 点击遮罩启动
+    overlay.addEventListener('click', startLockdown);
+
+    // 也支持按 Enter 或空格启动
+    document.addEventListener('keydown', function startKey(e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        document.removeEventListener('keydown', startKey);
+        startLockdown();
+      }
+    });
+
+    // 如果 URL 参数有 ?auto=1，自动启动（用于 Kiosk 模式）
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('auto') === '1') {
+      setTimeout(startLockdown, 500);
+    }
+  }
+
+  init();
+
+})();
+</script>
+</body>
+</html>
