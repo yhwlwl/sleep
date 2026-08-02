@@ -6,3 +6,5 @@ noon-lock-app/
 午休静校-便携版/
 *.exe
 .DS_Store
+# local cleanup archive
+archive/
